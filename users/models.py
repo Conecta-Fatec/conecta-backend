@@ -1,0 +1,183 @@
+from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.db import models
+from django.db.models import Q
+
+
+# =====================================
+# MANAGER PERSONALIZADO (CRIAÇÃO DE USUÁRIO)
+# =====================================
+class CustomUserManager(BaseUserManager):
+
+    def create_user(self, email, password=None, **extra_fields):
+        """Cria usuário comum usando email como identificador"""
+        if not email:
+            raise ValueError("O email é obrigatório")
+
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+
+        return user
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        """Cria superusuário com permissões administrativas"""
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+
+        return self.create_user(email, password, **extra_fields)
+
+
+# =====================================
+# MODELO DE USUÁRIO
+# =====================================
+class CustomUser(AbstractUser):
+    username = None  # remove username padrão
+
+   # ---------------------------------
+    # OPÇÕES DE CURSO
+    # ---------------------------------
+    COURSE_CHOICES = [
+        ("", "Selecione seu curso"),
+        ("Automação Industrial", "Automação Industrial"),
+        ("Desenvolvimento de Software Multiplataforma", "Desenvolvimento de Software Multiplataforma"),
+        ("Fabricação Mecânica", "Fabricação Mecânica"),
+        ("Manutenção Industrial", "Manutenção Industrial"),
+        ("Mecânica: Processos de Soldagem", "Mecânica: Processos de Soldagem"),
+        ("Refrigeração, Ventilação e Ar Condicionado", "Refrigeração, Ventilação e Ar Condicionado"),
+    ]
+
+    # ---------------------------------
+    # CAMPOS PRINCIPAIS
+    # ---------------------------------
+    first_name = models.CharField(max_length=30, verbose_name="Nome")
+    last_name = models.CharField(max_length=30, verbose_name="Sobrenome")
+    nickname = models.CharField(max_length=30, unique=True, verbose_name="Nickname")
+    email = models.EmailField(unique=True, verbose_name="Email institucional")
+
+    nickname_editable = models.BooleanField(default=True)
+
+    photo = models.ImageField(upload_to="profile_photos/", blank=True, null=True)
+
+    course = models.CharField(max_length=100, choices=COURSE_CHOICES, blank=True)
+    bio = models.CharField(max_length=150, blank=True)
+
+    # ---------------------------------
+    # CONFIGURAÇÃO DE LOGIN
+    # ---------------------------------
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["first_name", "last_name", "nickname"]
+
+    objects = CustomUserManager()
+
+    def __str__(self):
+        return self.nickname
+
+    # =====================================
+    # MÉTODOS DE AMIZADE (REGRAS DE NEGÓCIO)
+    # =====================================
+
+    def is_friends_with(self, user):
+        """Verifica se já são amigos"""
+        return Friendship.objects.filter(
+            Q(sender=self, receiver=user) | Q(sender=user, receiver=self),
+            status=Friendship.ACCEPTED
+        ).exists()
+
+    def sent_friend_request_to(self, user):
+        """Verifica se enviou solicitação pendente"""
+        return Friendship.objects.filter(
+            sender=self,
+            receiver=user,
+            status=Friendship.PENDING
+        ).exists()
+
+    def received_friend_request_from(self, user):
+        """Verifica se recebeu solicitação pendente"""
+        return Friendship.objects.filter(
+            sender=user,
+            receiver=self,
+            status=Friendship.PENDING
+        ).exists()
+
+    def get_friends(self):
+        """Retorna lista de amigos"""
+        friendships = Friendship.objects.filter(
+            Q(sender=self) | Q(receiver=self),
+            status=Friendship.ACCEPTED
+        ).select_related("sender", "receiver")
+
+        friends = []
+
+        for friendship in friendships:
+            if friendship.sender == self:
+                friends.append(friendship.receiver)
+            else:
+                friends.append(friendship.sender)
+
+        return friends
+
+    def friends_count(self):
+        """Quantidade total de amigos"""
+        return len(self.get_friends())
+
+
+# =====================================
+# MODELO DE AMIZADE
+# =====================================
+class Friendship(models.Model):
+
+    # ---------------------------------
+    # STATUS
+    # ---------------------------------
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+
+    STATUS_CHOICES = [
+        (PENDING, "Pendente"),
+        (ACCEPTED, "Aceita"),
+    ]
+
+    # ---------------------------------
+    # RELACIONAMENTOS
+    # ---------------------------------
+    sender = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="sent_friendships"
+    )
+
+    receiver = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="received_friendships"
+    )
+
+    # ---------------------------------
+    # CONTROLE
+    # ---------------------------------
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # ---------------------------------
+    # CONFIGURAÇÕES DO MODEL
+    # ---------------------------------
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["sender", "receiver"],
+                name="unique_friendship_request"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.sender} -> {self.receiver} ({self.status})"
+
+    def save(self, *args, **kwargs):
+        """Impede amizade com si mesmo"""
+        if self.sender == self.receiver:
+            raise ValueError("Um usuário não pode enviar amizade para si mesmo.")
+
+        super().save(*args, **kwargs)
