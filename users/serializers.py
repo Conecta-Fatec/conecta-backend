@@ -279,19 +279,34 @@ class FriendshipSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_sender(self, obj):
+    def get_user_data(self, user):
+        request = self.context.get("request")
+
+        photo_url = None
+        if user.photo:
+            photo_url = (
+                request.build_absolute_uri(user.photo.url)
+                if request
+                else user.photo.url
+            )
+
         return {
-            "id": obj.sender.id,
-            "full_name": f"{obj.sender.first_name} {obj.sender.last_name}".strip(),
-            "nickname": obj.sender.nickname,
+            "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "full_name": f"{user.first_name} {user.last_name}".strip(),
+            "nickname": user.nickname,
+            "course": user.course,
+            "bio": user.bio,
+            "photo_url": photo_url,
+            "friends_count": user.friends_count(),
         }
 
+    def get_sender(self, obj):
+        return self.get_user_data(obj.sender)
+
     def get_receiver(self, obj):
-        return {
-            "id": obj.receiver.id,
-            "full_name": f"{obj.receiver.first_name} {obj.receiver.last_name}".strip(),
-            "nickname": obj.receiver.nickname,
-        }
+        return self.get_user_data(obj.receiver)
 
 
 # =====================================
