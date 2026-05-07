@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from .models import Community, Post, Comment
 from .serializers import (
+    AuthorSerializer,
     CommunitySerializer,
     CommunityWriteSerializer,
     PostSerializer,
@@ -286,15 +287,11 @@ class CommunityDetailAPIView(APIView):
                     many=True,
                     context={"request": request}
                 ).data,
-                "members": [
-                    {
-                        "id": member.id,
-                        "first_name": member.first_name,
-                        "last_name": member.last_name,
-                        "nickname": member.nickname,
-                    }
-                    for member in members
-                ],
+                "members": AuthorSerializer(
+                    members,
+                    many=True,
+                    context={"request": request}
+                ).data,
                 "members_count": community.total_members(),
                 "is_member": is_member,
             },
