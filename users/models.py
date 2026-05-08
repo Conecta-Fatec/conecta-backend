@@ -1,7 +1,10 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.db.models import Q
-
+from PIL import Image, ImageOps
+from io import BytesIO
+from django.core.files.uploadedfile import InMemoryUploadedFile, UploadedFile
+import sys
 
 # =====================================
 # MANAGER PERSONALIZADO (CRIAÇÃO DE USUÁRIO)
@@ -120,6 +123,47 @@ class CustomUser(AbstractUser):
     def friends_count(self):
         """Quantidade total de amigos"""
         return len(self.get_friends())
+        # =====================================
+    # PROCESSAMENTO DE IMAGEM (CORTADOR DE BISCOITOS)
+    # =====================================
+    
+    def save(self, *args, **kwargs):
+        # 1. Verifica se existe uma foto E se ela é um arquivo recém-enviado pelo usuário
+        if self.photo and isinstance(self.photo.file, UploadedFile):
+            try:
+                # 2. Abre a imagem que acabou de chegar
+                img = Image.open(self.photo)
+
+                # 3. Converte para RGB (PreparaPNGs transparentes para virarem JPEG)
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+
+                # 4. O CORTADOR: Força a imagem a ser um quadrado de 500x500
+                tamanho_padrao = (500, 500)
+                img = ImageOps.fit(img, tamanho_padrao, Image.Resampling.LANCZOS)
+
+                # 5. Comprime a imagem
+                output = BytesIO()
+                img.save(output, format='JPEG', quality=70) # Quality 70 reduz o peso drasticamente!
+                output.seek(0)
+
+                # 6. Pega o nome original, arranca a extensão velha e coloca .jpg
+                nome_original = self.photo.name.split('.')[0]
+                novo_nome = f"{nome_original}.jpg"
+
+                # 7. Substitui a imagem pesada pela nova imagem leve e formatada
+                self.photo = InMemoryUploadedFile(
+                    output, 'ImageField', 
+                    novo_nome, 
+                    'image/jpeg', sys.getsizeof(output), None
+                )
+            except Exception as e:
+                # Se acontecer algum erro bizarro com a imagem, o Django simplesmente 
+                # ignora o corte e salva a imagem original para não quebrar o site
+                print(f"Erro ao processar imagem: {e}")
+
+        # 8. Finalmente, chama o comando original do Django para salvar no banco de dados!
+        super().save(*args, **kwargs)
 
 
 # =====================================
