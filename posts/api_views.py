@@ -277,7 +277,7 @@ class CommunityDetailAPIView(APIView):
     def get(self, request, slug):
         community = get_object_or_404(Community, slug=slug)
 
-       posts = community.posts.select_related(
+        posts = community.posts.select_related(
             "author"
         ).prefetch_related(
             "likes", 
