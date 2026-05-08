@@ -22,11 +22,20 @@ from .serializers import (
 # =====================================
 # Lista apenas posts normais do feed,
 # ou seja, posts que NÃO pertencem a comunidade.
+# =====================================
 class FeedAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        posts = Post.objects.filter(community__isnull=True).order_by("-created_at")
+        # select_related: Traz o dono do post na mesma viagem.
+        # prefetch_related: Traz as listas (curtidas, comentários e os autores dos comentários) na mesma viagem.
+        posts = Post.objects.filter(community__isnull=True).select_related(
+            "author"
+        ).prefetch_related(
+            "likes", 
+            "comments", 
+            "comments__author" 
+        ).order_by("-created_at")
 
         serializer = PostSerializer(
             posts,
@@ -35,7 +44,6 @@ class FeedAPIView(APIView):
         )
 
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 # =====================================
 # CRIAR POST NO FEED
@@ -269,7 +277,13 @@ class CommunityDetailAPIView(APIView):
     def get(self, request, slug):
         community = get_object_or_404(Community, slug=slug)
 
-        posts = community.posts.all().order_by("-created_at")
+       posts = community.posts.select_related(
+            "author"
+        ).prefetch_related(
+            "likes", 
+            "comments", 
+            "comments__author"
+        ).order_by("-created_at")
         members = community.members.all().order_by("first_name", "last_name")
 
         is_member = False
