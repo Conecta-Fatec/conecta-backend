@@ -186,6 +186,7 @@ class CommunityMiniSerializer(serializers.ModelSerializer):
 # - likes
 # - se foi editado
 # - se o usuário atual curtiu
+
 class CommentSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(read_only=True)
     total_likes = serializers.SerializerMethodField()
@@ -211,23 +212,35 @@ class CommentSerializer(serializers.ModelSerializer):
         ]
 
     def get_total_likes(self, obj):
-        return obj.total_likes()
+        # Conta as curtidas na memória usando len() em vez de viagem ao banco
+        return len(obj.likes.all())
 
     def get_liked_by_me(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
 
         if user and user.is_authenticated:
-            return obj.likes.filter(id=user.id).exists()
+            # Mantém a verificação na memória
+            return user in obj.likes.all()
 
         return False
 
     def get_replies_count(self, obj):
-        return obj.replies.count()
+        # Aproveita a lista de todos os comentários do post para contar as respostas na memória
+        all_post_comments = obj.post.comments.all()
+        replies = [c for c in all_post_comments if c.parent_id == obj.id]
+        return len(replies)
 
     def get_replies(self, obj):
-        # Busca todas as respostas deste comentário, ordenadas das mais antigas para as mais novas
-        replies = obj.replies.all().order_by("created_at")
+        # Pega todos os comentários do post (que já foram trazidos na viagem única)
+        all_post_comments = obj.post.comments.all()
+        
+        # Filtra apenas os que são filhos deste comentário
+        replies = [c for c in all_post_comments if c.parent_id == obj.id]
+        
+        # Ordena do mais antigo para o mais novo usando o Python
+        replies.sort(key=lambda x: x.created_at)
+        
         # Usa o próprio CommentSerializer para transformar as respostas em JSON
         serializer = CommentSerializer(replies, many=True, context=self.context)
         return serializer.data
@@ -292,22 +305,30 @@ class PostSerializer(serializers.ModelSerializer):
         ]
 
     def get_total_likes(self, obj):
-        return obj.total_likes()
+        # Usamos len() com .all() para contar direto na memória 
+        # e não fazer o banco de dados trabalhar de novo.
+        return len(obj.likes.all())
 
     def get_liked_by_me(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
 
         if user and user.is_authenticated:
-            return obj.likes.filter(id=user.id).exists()
+            return user in obj.likes.all()
 
         return False
 
     def get_comments_count(self, obj):
-        return obj.comments.count()
+        # Trocamos o .count() pelo len() para manter na memória!
+        return len(obj.comments.all())
 
     def get_top_level_comments(self, obj):
-        comments = obj.comments.filter(parent__isnull=True).order_by("created_at")
+        # Filtra na memória os comentários que não têm pai (comentários principais)
+        comments = [c for c in obj.comments.all() if c.parent_id is None]
+        
+        # Ordena do mais antigo para o mais novo usando o Python
+        comments.sort(key=lambda x: x.created_at)
+        
         serializer = CommentSerializer(
             comments,
             many=True,
