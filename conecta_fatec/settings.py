@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+
 import dj_database_url
 # =====================================
 # CAMINHO BASE DO PROJETO
@@ -49,7 +50,9 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # =====================================
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
+    # CORS deve vir o mais alto possível para liberar o frontend local.
+    'corsheaders.middleware.CorsMiddleware',
+
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -246,6 +249,7 @@ FATEC_EMAIL_DOMAIN = "@fatec.sp.gov.br"
 EMAIL_VERIFICATION_CODE_MINUTES = 10
 EMAIL_VERIFICATION_MAX_ATTEMPTS = 5
 REGISTRATION_TOKEN_MAX_AGE_SECONDS = 30 * 60
+
 
 # =====================================
 # ENVIO DE EMAIL - BREVO API / SMTP
