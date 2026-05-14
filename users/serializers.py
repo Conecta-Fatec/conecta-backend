@@ -1,7 +1,13 @@
 import re
 
+from django.core.signing import BadSignature, SignatureExpired
+from django.db import transaction
+from django.utils import timezone
 from django.contrib.auth import authenticate
 from rest_framework import serializers
+
+from email_verification.models import EmailVerification
+from email_verification.services import read_registration_token
 
 from .models import CustomUser, Friendship
 from posts.models import Post, Community
@@ -312,7 +318,17 @@ class FriendshipSerializer(serializers.ModelSerializer):
 # =====================================
 # SERIALIZER DE CADASTRO
 # =====================================
+# O cadastro não recebe mais email direto do frontend.
+# O email é extraído do registration_token, gerado após a confirmação do código.
 class RegisterSerializer(serializers.ModelSerializer):
+    registration_token = serializers.CharField(
+        write_only=True,
+        error_messages={
+            "blank": "O token de verificação é obrigatório.",
+            "required": "O token de verificação é obrigatório.",
+        }
+    )
+
     password = serializers.CharField(
         write_only=True,
         min_length=8,
@@ -337,7 +353,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "nickname",
-            "email",
+            "registration_token",
             "password",
             "confirm_password",
         ]
@@ -380,35 +396,75 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         return value
 
-    def validate_email(self, value):
-        value = value.strip().lower()
-
-        if not value:
-            raise serializers.ValidationError("O email institucional é obrigatório.")
-
-        if not value.endswith("@fatec.sp.gov.br"):
-            raise serializers.ValidationError(
-                "Use um email institucional que termine com @fatec.sp.gov.br."
-            )
-
-        if CustomUser.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Este email já está em uso.")
-
-        return value
-
     def validate(self, attrs):
         password = attrs.get("password")
         confirm_password = attrs.get("confirm_password")
+        registration_token = attrs.get("registration_token")
 
         if password != confirm_password:
             raise serializers.ValidationError({
                 "confirm_password": "As senhas não coincidem."
             })
 
+        # Lê o token temporário criado após o usuário acertar o código.
+        # Se o token foi alterado, expirou ou não existe, o cadastro é bloqueado.
+        try:
+            token_data = read_registration_token(registration_token)
+        except SignatureExpired:
+            raise serializers.ValidationError({
+                "registration_token": "Token de cadastro expirado. Solicite um novo código."
+            })
+        except BadSignature:
+            raise serializers.ValidationError({
+                "registration_token": "Token de cadastro inválido. Confirme o email novamente."
+            })
+
+        verification_id = token_data.get("verification_id")
+        email = str(token_data.get("email", "")).strip().lower()
+        purpose = token_data.get("purpose")
+
+        if purpose != EmailVerification.PURPOSE_REGISTER:
+            raise serializers.ValidationError({
+                "registration_token": "Token de cadastro inválido."
+            })
+
+        try:
+            verification = EmailVerification.objects.get(
+                id=verification_id,
+                email__iexact=email,
+                purpose=EmailVerification.PURPOSE_REGISTER,
+            )
+        except EmailVerification.DoesNotExist:
+            raise serializers.ValidationError({
+                "registration_token": "Verificação de email não encontrada."
+            })
+
+        if not verification.is_confirmed:
+            raise serializers.ValidationError({
+                "registration_token": "Confirme o código enviado para o email antes de cadastrar."
+            })
+
+        if verification.is_registered:
+            raise serializers.ValidationError({
+                "registration_token": "Este token de cadastro já foi utilizado."
+            })
+
+        if CustomUser.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError({
+                "registration_token": "Email já cadastrado no nosso site."
+            })
+
+        # O email final vem somente da verificação confirmada.
+        # Assim o usuário não consegue trocar o email manualmente no cadastro.
+        attrs["email"] = email
+        attrs["verification"] = verification
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
         validated_data.pop("confirm_password")
+        validated_data.pop("registration_token")
+        verification = validated_data.pop("verification")
 
         user = CustomUser.objects.create_user(
             email=validated_data["email"],
@@ -417,6 +473,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             last_name=validated_data["last_name"],
             password=validated_data["password"],
         )
+
+        # Marca a verificação como usada para impedir reutilização do mesmo token.
+        verification.registered_at = timezone.now()
+        verification.save(update_fields=["registered_at", "updated_at"])
 
         return user
 

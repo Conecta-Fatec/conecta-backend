@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+
 import dj_database_url
 # =====================================
 # CAMINHO BASE DO PROJETO
@@ -41,6 +42,7 @@ INSTALLED_APPS = [
     # Apps do projeto
     'users',
     'posts',
+    'email_verification',
 ]
 
 
@@ -48,12 +50,10 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # =====================================
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
-    'django.middleware.security.SecurityMiddleware',
-
-    # CORS deve vir o mais alto possível
+    # CORS deve vir o mais alto possível para liberar o frontend local.
     'corsheaders.middleware.CorsMiddleware',
 
+    'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
 
@@ -223,7 +223,6 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8000',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
 
 # ==========================================
 # CONFIGURAÇÃO DE NUVEM (De imagens)
@@ -241,3 +240,21 @@ STORAGES = {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
+
+# =====================================
+# VERIFICAÇÃO DE EMAIL INSTITUCIONAL
+# =====================================
+FATEC_EMAIL_DOMAIN = "@fatec.sp.gov.br"
+
+EMAIL_VERIFICATION_CODE_MINUTES = 10
+EMAIL_VERIFICATION_MAX_ATTEMPTS = 5
+REGISTRATION_TOKEN_MAX_AGE_SECONDS = 30 * 60
+
+
+# =====================================
+# ENVIO DE EMAIL EM DESENVOLVIMENTO
+# =====================================
+# Por enquanto o código aparece no terminal do Django.
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+DEFAULT_FROM_EMAIL = "Conecta Fatec <no-reply@conectafatec.local>"
