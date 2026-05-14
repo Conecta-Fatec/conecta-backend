@@ -1,15 +1,21 @@
-from django.contrib import admin
-from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from rest_framework_simplejwt.views import TokenRefreshView
-from users.jwt_views import CustomTokenObtainPairView
+from django.contrib import admin
 from django.http import HttpResponse
+from django.urls import include, path
+from rest_framework_simplejwt.views import TokenRefreshView
+
+from users.jwt_views import CustomTokenObtainPairView
 
 
-#Função para rodar 24hrs
+# =====================================
+# HEALTH CHECK
+# =====================================
+# Rota simples usada para testar se o servidor está online.
 def health_check(request):
     return HttpResponse("Servidor Online", status=200)
+
+
 # =====================================
 # ROTAS PRINCIPAIS DO PROJETO
 # =====================================
@@ -18,10 +24,10 @@ def health_check(request):
 # - rotas da API de usuários
 # - rotas da API de posts
 # - autenticação JWT
-# - suporte ao login visual do DRF para testes
+# - verificação de email institucional
 urlpatterns = [
-    #Função para rodar 24hrs
-    path('', health_check),
+    # Servidor online
+    path("", health_check),
 
     # Painel administrativo
     path("admin/", admin.site.urls),
@@ -32,7 +38,13 @@ urlpatterns = [
     # API de posts
     path("api/posts/", include(("posts.urls", "posts"), namespace="posts")),
 
-    # Login visual do DRF (útil em testes no navegador)
+    # Verificação de email para cadastro
+    path(
+        "api/email-verification/",
+        include(("email_verification.urls", "email_verification"), namespace="email_verification"),
+    ),
+
+    # Login visual do DRF, útil em testes no navegador
     path("api-auth/", include("rest_framework.urls")),
 
     # JWT - obter token
@@ -46,6 +58,6 @@ urlpatterns = [
 # =====================================
 # ARQUIVOS DE MÍDIA EM DESENVOLVIMENTO
 # =====================================
-# Permite acessar fotos enviadas pelo projeto enquanto DEBUG=True
+# Permite acessar fotos enviadas pelo projeto enquanto DEBUG=True.
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
