@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+
 import dj_database_url
 # =====================================
 # CAMINHO BASE DO PROJETO
@@ -49,7 +50,9 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # =====================================
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
+    # CORS deve vir o mais alto possível para liberar o frontend local.
+    'corsheaders.middleware.CorsMiddleware',
+
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -247,25 +250,11 @@ EMAIL_VERIFICATION_CODE_MINUTES = 10
 EMAIL_VERIFICATION_MAX_ATTEMPTS = 5
 REGISTRATION_TOKEN_MAX_AGE_SECONDS = 30 * 60
 
+
 # =====================================
-# ENVIO DE EMAIL - MICROSOFT 365 / FATEC
+# ENVIO DE EMAIL EM DESENVOLVIMENTO
 # =====================================
+# Por enquanto o código aparece no terminal do Django.
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.office365.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
-EMAIL_USE_SSL = False
-
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-
-DEFAULT_FROM_EMAIL = os.getenv(
-    "DEFAULT_FROM_EMAIL",
-    EMAIL_HOST_USER
-)
-
-SERVER_EMAIL = DEFAULT_FROM_EMAIL
-
-EMAIL_TIMEOUT = 10  
+DEFAULT_FROM_EMAIL = "Conecta Fatec <no-reply@conectafatec.local>"
