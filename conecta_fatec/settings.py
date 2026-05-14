@@ -248,9 +248,19 @@ EMAIL_VERIFICATION_MAX_ATTEMPTS = 5
 REGISTRATION_TOKEN_MAX_AGE_SECONDS = 30 * 60
 
 # =====================================
-# ENVIO DE EMAIL - MICROSOFT 365 / FATEC
+# ENVIO DE EMAIL - BREVO API / SMTP
 # =====================================
+# Padrão: Brevo via API HTTPS.
+# Motivo: hospedagens como Render podem bloquear portas SMTP.
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "brevo").lower()
 
+# Dados usados pela API transacional da Brevo.
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "Conecta Fatec")
+
+# Configuração SMTP mantida apenas como fallback.
+# Para usar SMTP, defina EMAIL_PROVIDER=smtp no ambiente.
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.office365.com")
@@ -263,9 +273,10 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL",
-    EMAIL_HOST_USER
+    BREVO_SENDER_EMAIL or EMAIL_HOST_USER or "no-reply@conectafatec.local"
 )
 
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
-EMAIL_TIMEOUT = 10  
+EMAIL_TIMEOUT = 10
+BREVO_EMAIL_TIMEOUT = int(os.getenv("BREVO_EMAIL_TIMEOUT", "15"))
