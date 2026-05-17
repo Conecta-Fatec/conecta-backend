@@ -13,6 +13,18 @@ from .models import CustomUser, Friendship
 from posts.models import Post, Community
 
 
+def normalize_person_name(value):
+    """Aceita letras e espaços, incluindo nomes compostos."""
+    value = " ".join(value.strip().split())
+
+    if not value:
+        return value
+
+    if not all(part.isalpha() for part in value.split(" ")):
+        raise serializers.ValidationError("Use apenas letras e espaços.")
+
+    return value
+
 # =====================================
 # SERIALIZER RESUMIDO DE COMUNIDADE
 # =====================================
@@ -35,6 +47,7 @@ class ProfileCommunitySerializer(serializers.ModelSerializer):
 
     def get_members_count(self, obj):
         return obj.total_members()
+
 
     def get_photo_url(self, obj):
         request = self.context.get("request")
@@ -93,6 +106,8 @@ class ProfilePostSerializer(serializers.ModelSerializer):
 # - posts do usuário
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    nickname_editable = serializers.SerializerMethodField()
+    nickname_change_status = serializers.SerializerMethodField()
     photo_url = serializers.SerializerMethodField()
     friends_count = serializers.SerializerMethodField()
     friends = serializers.SerializerMethodField()
@@ -114,6 +129,7 @@ class UserSerializer(serializers.ModelSerializer):
             "photo",
             "photo_url",
             "nickname_editable",
+            "nickname_change_status",
             "friends_count",
             "friends",
             "created_communities",
@@ -123,6 +139,21 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_nickname_editable(self, obj):
+        return obj.can_change_nickname()
+
+    def get_nickname_change_status(self, obj):
+        status = obj.get_nickname_change_status()
+        next_reset_at = status.get("next_reset_at")
+
+        return {
+            "limit": status["limit"],
+            "used": status["used"],
+            "remaining": status["remaining"],
+            "can_change": status["can_change"],
+            "next_reset_at": next_reset_at.isoformat() if next_reset_at else None,
+        }
 
     def get_photo_url(self, obj):
         request = self.context.get("request")
@@ -316,6 +347,69 @@ class FriendshipSerializer(serializers.ModelSerializer):
 
 
 # =====================================
+# SERIALIZER RESUMIDO DE USUÁRIO
+# =====================================
+# Usado em busca de usuários e listas de amigos públicas.
+class UserCardSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    photo_url = serializers.SerializerMethodField()
+    friends_count = serializers.SerializerMethodField()
+    friendship_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "full_name",
+            "nickname",
+            "course",
+            "bio",
+            "photo_url",
+            "friends_count",
+            "friendship_status",
+        ]
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_photo_url(self, obj):
+        request = self.context.get("request")
+
+        if obj.photo:
+            if request:
+                return request.build_absolute_uri(obj.photo.url)
+            return obj.photo.url
+
+        return None
+
+    def get_friends_count(self, obj):
+        return obj.friends_count()
+
+    def get_friendship_status(self, obj):
+        request = self.context.get("request")
+        current_user = getattr(request, "user", None)
+
+        if not current_user or not current_user.is_authenticated:
+            return "anonymous"
+
+        if current_user == obj:
+            return "self"
+
+        if current_user.is_friends_with(obj):
+            return "friends"
+
+        if current_user.sent_friend_request_to(obj):
+            return "request_sent"
+
+        if current_user.received_friend_request_from(obj):
+            return "request_received"
+
+        return "not_friends"
+
+
+# =====================================
 # SERIALIZER DE CADASTRO
 # =====================================
 # O cadastro não recebe mais email direto do frontend.
@@ -359,24 +453,18 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
 
     def validate_first_name(self, value):
-        value = value.strip()
+        value = normalize_person_name(value)
 
         if not value:
             raise serializers.ValidationError("O nome é obrigatório.")
 
-        if not value.isalpha():
-            raise serializers.ValidationError("O nome deve conter apenas letras.")
-
         return value
 
     def validate_last_name(self, value):
-        value = value.strip()
+        value = normalize_person_name(value)
 
         if not value:
             raise serializers.ValidationError("O sobrenome é obrigatório.")
-
-        if not value.isalpha():
-            raise serializers.ValidationError("O sobrenome deve conter apenas letras.")
 
         return value
 
@@ -497,24 +585,18 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_first_name(self, value):
-        value = value.strip()
+        value = normalize_person_name(value)
 
         if not value:
             raise serializers.ValidationError("O nome é obrigatório.")
 
-        if not value.isalpha():
-            raise serializers.ValidationError("O nome deve conter apenas letras.")
-
         return value
 
     def validate_last_name(self, value):
-        value = value.strip()
+        value = normalize_person_name(value)
 
         if not value:
             raise serializers.ValidationError("O sobrenome é obrigatório.")
-
-        if not value.isalpha():
-            raise serializers.ValidationError("O sobrenome deve conter apenas letras.")
 
         return value
 
@@ -530,10 +612,20 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
                 "O nickname deve conter apenas letras minúsculas e números."
             )
 
-        if not user.nickname_editable and value != user.nickname:
-            raise serializers.ValidationError(
-                "Você só pode alterar o nickname uma única vez."
-            )
+        if value != user.nickname:
+            change_status = user.get_nickname_change_status()
+
+            if not change_status["can_change"]:
+                next_reset_at = change_status.get("next_reset_at")
+                reset_message = (
+                    f" Você poderá alterar novamente em {next_reset_at.strftime('%d/%m/%Y')}."
+                    if next_reset_at
+                    else ""
+                )
+                raise serializers.ValidationError(
+                    "Você pode alterar o nickname no máximo 2 vezes a cada 20 dias."
+                    + reset_message
+                )
 
         if CustomUser.objects.filter(nickname=value).exclude(pk=user.pk).exists():
             raise serializers.ValidationError("Este nickname já está em uso.")
@@ -541,7 +633,8 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_bio(self, value):
-        value = value.strip()
+        # Mantém a bio em uma linha, sem quebras escondidas.
+        value = " ".join(value.strip().split())
 
         if len(value) > 150:
             raise serializers.ValidationError(
@@ -558,7 +651,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
 
         if old_nickname != new_nickname:
-            instance.nickname_editable = False
+            instance.register_nickname_change()
 
         instance.save()
         return instance

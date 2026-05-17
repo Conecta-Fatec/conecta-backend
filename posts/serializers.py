@@ -354,7 +354,9 @@ class PostWriteSerializer(serializers.ModelSerializer):
         ]
 
     def validate_content(self, value):
-        value = value.strip()
+        # Remove quebras de linha/espaços duplicados.
+        # A ação de postar com Enter fica no frontend.
+        value = " ".join(value.strip().split())
 
         if not value:
             raise serializers.ValidationError("O post não pode ficar vazio.")

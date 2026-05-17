@@ -13,6 +13,7 @@ from .serializers import (
     PublicUserSerializer,
     ProfileUpdateSerializer,
     FriendshipSerializer,
+    UserCardSerializer,
 )
 
 
@@ -134,6 +135,60 @@ class PublicProfileAPIView(APIView):
 
 
 # =====================================
+# BUSCAR / LISTAR USUÁRIOS
+# =====================================
+# Usado pela página de amizades.
+# Retorna também o total real de usuários cadastrados no site.
+class UsersSearchAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query = (
+            request.query_params.get("q")
+            or request.query_params.get("search")
+            or ""
+        ).strip()
+
+        users = CustomUser.objects.all().order_by("first_name", "last_name", "nickname")
+
+        if query:
+            users = users.filter(
+                Q(first_name__icontains=query)
+                | Q(last_name__icontains=query)
+                | Q(nickname__icontains=query)
+                | Q(course__icontains=query)
+            )
+
+        serializer = UserCardSerializer(
+            users,
+            many=True,
+            context={"request": request}
+        )
+
+        return Response(
+            {
+                "total_users": CustomUser.objects.count(),
+                "count": users.count(),
+                "users": serializer.data,
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+# =====================================
+# TOTAL DE USUÁRIOS CADASTRADOS
+# =====================================
+class UsersTotalAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(
+            {"total_users": CustomUser.objects.count()},
+            status=status.HTTP_200_OK
+        )
+
+
+# =====================================
 # LISTAR AMIGOS DO USUÁRIO LOGADO
 # =====================================
 class FriendsListAPIView(APIView):
@@ -170,6 +225,35 @@ class FriendsListAPIView(APIView):
 # =====================================
 # LISTAR SOLICITAÇÕES RECEBIDAS
 # =====================================
+
+
+# =====================================
+# LISTAR AMIGOS DE UM PERFIL PÚBLICO
+# =====================================
+class PublicFriendsListAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, nickname):
+        user = get_object_or_404(CustomUser, nickname=nickname)
+        friends = user.get_friends()
+
+        serializer = UserCardSerializer(
+            friends,
+            many=True,
+            context={"request": request}
+        )
+
+        return Response(
+            {
+                "nickname": user.nickname,
+                "friends_count": len(friends),
+                "count": len(friends),
+                "friends": serializer.data,
+            },
+            status=status.HTTP_200_OK
+        )
+
+
 class ReceivedFriendRequestsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -402,5 +486,3 @@ class RemoveFriendAPIView(APIView):
             status=status.HTTP_200_OK
         )
 
-        from django.contrib.auth import get_user_model
-from rest_framework.response import Response

@@ -69,7 +69,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "email": user.email,
                 "course": user.course,
                 "bio": user.bio,
-                "nickname_editable": user.nickname_editable,
+                "nickname_editable": user.can_change_nickname(),
                 "photo_url": (
                     self.context["request"].build_absolute_uri(user.photo.url)
                     if user.photo and self.context.get("request")

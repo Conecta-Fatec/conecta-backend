@@ -1,6 +1,9 @@
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 from PIL import Image, ImageOps
 from io import BytesIO
 from django.core.files.uploadedfile import InMemoryUploadedFile, UploadedFile
@@ -58,7 +61,11 @@ class CustomUser(AbstractUser):
     nickname = models.CharField(max_length=30, unique=True, verbose_name="Nickname")
     email = models.EmailField(unique=True, verbose_name="Email institucional")
 
+    # Mantido para compatibilidade com o frontend antigo.
+    # A regra real agora usa nickname_changes_count + nickname_change_window_started_at.
     nickname_editable = models.BooleanField(default=True)
+    nickname_changes_count = models.PositiveSmallIntegerField(default=0)
+    nickname_change_window_started_at = models.DateTimeField(blank=True, null=True)
 
     photo = models.ImageField(upload_to="profile_photos/", blank=True, null=True)
 
@@ -75,6 +82,57 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return self.nickname
+
+    # ---------------------------------
+    # REGRAS DE ALTERAÇÃO DE NICKNAME
+    # ---------------------------------
+    NICKNAME_CHANGE_LIMIT = 2
+    NICKNAME_CHANGE_WINDOW_DAYS = 20
+
+    def get_nickname_change_status(self):
+        """Retorna o estado atual da janela de alteração de nickname."""
+        now = timezone.now()
+        window_start = self.nickname_change_window_started_at
+
+        if not window_start:
+            used = 0
+            next_reset_at = None
+        else:
+            next_reset_at = window_start + timedelta(days=self.NICKNAME_CHANGE_WINDOW_DAYS)
+
+            if now >= next_reset_at:
+                used = 0
+                next_reset_at = None
+            else:
+                used = self.nickname_changes_count
+
+        remaining = max(0, self.NICKNAME_CHANGE_LIMIT - used)
+
+        return {
+            "limit": self.NICKNAME_CHANGE_LIMIT,
+            "used": used,
+            "remaining": remaining,
+            "can_change": remaining > 0,
+            "next_reset_at": next_reset_at,
+        }
+
+    def can_change_nickname(self):
+        """Informa se o usuário ainda pode alterar o nickname na janela atual."""
+        return self.get_nickname_change_status()["can_change"]
+
+    def register_nickname_change(self):
+        """Registra uma alteração de nickname dentro da janela de 20 dias."""
+        now = timezone.now()
+        status = self.get_nickname_change_status()
+
+        if status["used"] == 0:
+            self.nickname_change_window_started_at = now
+            self.nickname_changes_count = 1
+        else:
+            self.nickname_changes_count = status["used"] + 1
+
+        # Atualiza o booleano antigo apenas para não quebrar retornos antigos.
+        self.nickname_editable = self.nickname_changes_count < self.NICKNAME_CHANGE_LIMIT
 
     # =====================================
     # MÉTODOS DE AMIZADE (REGRAS DE NEGÓCIO)
