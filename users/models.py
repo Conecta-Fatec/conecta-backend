@@ -161,22 +161,22 @@ class CustomUser(AbstractUser):
             status=Friendship.PENDING
         ).exists()
 
-    def get_friends(self):
-        """Retorna lista de amigos"""
-        friendships = Friendship.objects.filter(
-            Q(sender=self) | Q(receiver=self),
-            status=Friendship.ACCEPTED
-        ).select_related("sender", "receiver")
+def get_friends(self):
+        """Retorna lista de amigos usando a memória do Django (Cache)"""
 
-        friends = []
+        amigos_enviados = [
+            amizade.receiver 
+            for amizade in self.sent_friendships.all() 
+            if amizade.status == Friendship.ACCEPTED
+        ]
 
-        for friendship in friendships:
-            if friendship.sender == self:
-                friends.append(friendship.receiver)
-            else:
-                friends.append(friendship.sender)
+        amigos_recebidos = [
+            amizade.sender 
+            for amizade in self.received_friendships.all() 
+            if amizade.status == Friendship.ACCEPTED
+        ]
 
-        return friends
+        return amigos_enviados + amigos_recebidos
 
     def friends_count(self):
         """Quantidade total de amigos"""

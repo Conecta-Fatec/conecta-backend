@@ -14,10 +14,12 @@ from .serializers import (
     PostWriteSerializer,
     CommentSerializer,
     CommentWriteSerializer,
-)
-# =====================================
+)# =====================================
 # FEED GLOBAL
 # =====================================
+
+
+
 class FeedAPIView(APIView):
     permission_classes = [AllowAny]
 
@@ -28,10 +30,8 @@ class FeedAPIView(APIView):
             "likes", 
             "comments", 
             "comments__author",
-            # AS LINHAS MÁGICAS: Trazem os dados do autor de uma vez só!
-            "author__communities",
-            "author__sent_friendships",
-            "author__received_friendships"
+            "author__sent_friendships__receiver",
+            "author__received_friendships__sender"
         ).order_by("-created_at")
 
         serializer = PostSerializer(
@@ -42,7 +42,7 @@ class FeedAPIView(APIView):
 
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-        
+
 # =====================================
 # CRIAR POST NO FEED
 # =====================================
