@@ -15,26 +15,23 @@ from .serializers import (
     CommentSerializer,
     CommentWriteSerializer,
 )
-
-
 # =====================================
 # FEED GLOBAL
-# =====================================
-# Lista apenas posts normais do feed,
-# ou seja, posts que NÃO pertencem a comunidade.
 # =====================================
 class FeedAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        # select_related: Traz o dono do post na mesma viagem.
-        # prefetch_related: Traz as listas (curtidas, comentários e os autores dos comentários) na mesma viagem.
         posts = Post.objects.filter(community__isnull=True).select_related(
             "author"
         ).prefetch_related(
             "likes", 
             "comments", 
-            "comments__author" 
+            "comments__author",
+            # AS LINHAS MÁGICAS: Trazem os dados do autor de uma vez só!
+            "author__communities",
+            "author__sent_friendships",
+            "author__received_friendships"
         ).order_by("-created_at")
 
         serializer = PostSerializer(
@@ -45,6 +42,7 @@ class FeedAPIView(APIView):
 
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+        
 # =====================================
 # CRIAR POST NO FEED
 # =====================================

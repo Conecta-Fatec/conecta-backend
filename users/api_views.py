@@ -44,7 +44,6 @@ class RegisterAPIView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 # =====================================
 # PERFIL PRIVADO DO USUÁRIO LOGADO
 # =====================================
@@ -52,8 +51,16 @@ class MyProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        user = CustomUser.objects.prefetch_related(
+            'communities',          # Lista de comunidades que ele participa
+            'sent_friendships',     # Amizades que ele enviou
+            'received_friendships', # Amizades que ele recebeu
+            'post_set'              # Posts que ele criou (Nome padrão do Django)
+        ).get(id=request.user.id)
+
+        # 2. Passamos o usuário "turbinado" para o Serializer
         serializer = UserSerializer(
-            request.user,
+            user,
             context={"request": request}
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
