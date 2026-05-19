@@ -186,25 +186,26 @@ class UserSerializer(serializers.ModelSerializer):
         ]
 
     def get_created_communities(self, obj):
-        communities = obj.created_communities.all().order_by("name")
+        # Lemos da memória com .all() e ordenamos com o Python
+        communities = list(obj.created_communities.all())
+        communities.sort(key=lambda c: c.name)
         return ProfileCommunitySerializer(
-            communities,
-            many=True,
-            context=self.context
+            communities, many=True, context=self.context
         ).data
 
     def get_joined_communities(self, obj):
-        communities = obj.communities.exclude(creator=obj).order_by("name")
+        # Filtramos (exclude) e ordenamos na memória com o Python
+        communities = [c for c in obj.communities.all() if c.creator_id != obj.id]
+        communities.sort(key=lambda c: c.name)
         return ProfileCommunitySerializer(
-            communities,
-            many=True,
-            context=self.context
+            communities, many=True, context=self.context
         ).data
 
     def get_posts(self, obj):
-        posts = obj.posts.all().select_related("community").order_by("-created_at")
+        # Lemos da memória e ordenamos os posts
+        posts = list(obj.posts.all())
+        posts.sort(key=lambda p: p.created_at, reverse=True)
         return ProfilePostSerializer(posts, many=True).data
-
 
 # =====================================
 # SERIALIZER DE PERFIL PÚBLICO

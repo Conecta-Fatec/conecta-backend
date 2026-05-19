@@ -139,27 +139,28 @@ class CustomUser(AbstractUser):
     # =====================================
 
     def is_friends_with(self, user):
-        """Verifica se já são amigos"""
-        return Friendship.objects.filter(
-            Q(sender=self, receiver=user) | Q(sender=user, receiver=self),
-            status=Friendship.ACCEPTED
-        ).exists()
+        """Verifica na memória se já são amigos"""
+        for amizade in self.sent_friendships.all():
+            if amizade.receiver_id == user.id and amizade.status == "accepted": 
+                return True
+        for amizade in self.received_friendships.all():
+            if amizade.sender_id == user.id and amizade.status == "accepted": 
+                return True
+        return False
 
     def sent_friend_request_to(self, user):
-        """Verifica se enviou solicitação pendente"""
-        return Friendship.objects.filter(
-            sender=self,
-            receiver=user,
-            status=Friendship.PENDING
-        ).exists()
+        """Verifica na memória se enviou solicitação"""
+        for amizade in self.sent_friendships.all():
+            if amizade.receiver_id == user.id and amizade.status == "pending": 
+                return True
+        return False
 
     def received_friend_request_from(self, user):
-        """Verifica se recebeu solicitação pendente"""
-        return Friendship.objects.filter(
-            sender=user,
-            receiver=self,
-            status=Friendship.PENDING
-        ).exists()
+        """Verifica na memória se recebeu solicitação"""
+        for amizade in self.received_friendships.all():
+            if amizade.sender_id == user.id and amizade.status == "pending": 
+                return True
+        return False
 
     def get_friends(self):
         """Retorna lista de amigos usando a memória do Django (Cache)"""

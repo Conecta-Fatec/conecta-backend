@@ -50,9 +50,13 @@ class MyProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # Agora usamos os nomes EXATOS para blindar o N+1 de uma vez por todas
         user = CustomUser.objects.prefetch_related(
             'sent_friendships__receiver',
-            'received_friendships__sender'
+            'received_friendships__sender',
+            'created_communities',
+            'communities',
+            'posts__community'  # <- Esta magia traz o nome da comunidade do post junto!
         ).get(id=request.user.id)
 
         serializer = UserSerializer(
@@ -60,8 +64,6 @@ class MyProfileAPIView(APIView):
             context={"request": request}
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-        
 
 # =====================================
 # EDIÇÃO DO PERFIL DO USUÁRIO LOGADO
