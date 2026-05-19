@@ -176,7 +176,7 @@ def get_friends(self):
             if amizade.status == Friendship.ACCEPTED
         ]
 
-        return amigos_enviados + amigos_recebidos
+    return amigos_enviados + amigos_recebidos
 
     def friends_count(self):
         """Quantidade total de amigos"""
