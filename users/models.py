@@ -161,7 +161,7 @@ class CustomUser(AbstractUser):
             status=Friendship.PENDING
         ).exists()
 
-def get_friends(self):
+    def get_friends(self):
         """Retorna lista de amigos usando a memória do Django (Cache)"""
 
         amigos_enviados = [
@@ -176,7 +176,7 @@ def get_friends(self):
             if amizade.status == Friendship.ACCEPTED
         ]
 
-    return amigos_enviados + amigos_recebidos
+        return amigos_enviados + amigos_recebidos
 
     def friends_count(self):
         """Quantidade total de amigos"""
