@@ -18,8 +18,9 @@ from .serializers import (
 # FEED GLOBAL
 # =====================================
 
-
-
+# =====================================
+# FEED GLOBAL
+# =====================================
 class FeedAPIView(APIView):
     permission_classes = [AllowAny]
 
@@ -31,7 +32,11 @@ class FeedAPIView(APIView):
             "comments", 
             "comments__author",
             "author__sent_friendships__receiver",
-            "author__received_friendships__sender"
+            "author__received_friendships__sender",
+            # --- AS TRÊS LINHAS NOVAS PARA OS COMENTÁRIOS ---
+            "comments__likes", 
+            "comments__author__sent_friendships__receiver",
+            "comments__author__received_friendships__sender"
         ).order_by("-created_at")
 
         serializer = PostSerializer(
@@ -41,7 +46,6 @@ class FeedAPIView(APIView):
         )
 
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 # =====================================
 # CRIAR POST NO FEED

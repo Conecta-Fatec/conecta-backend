@@ -226,22 +226,24 @@ class CommentSerializer(serializers.ModelSerializer):
         return False
 
     def get_replies_count(self, obj):
-        # Aproveita a lista de todos os comentários do post para contar as respostas na memória
-        all_post_comments = obj.post.comments.all()
-        replies = [c for c in all_post_comments if c.parent_id == obj.id]
+        # Lê a lista da memória que o PostSerializer vai nos dar!
+        all_comments = self.context.get("all_post_comments", [])
+        if not all_comments: # Segurança caso seja acessado de outro lugar
+            all_comments = list(obj.post.comments.all())
+            
+        replies = [c for c in all_comments if c.parent_id == obj.id]
         return len(replies)
 
     def get_replies(self, obj):
-        # Pega todos os comentários do post (que já foram trazidos na viagem única)
-        all_post_comments = obj.post.comments.all()
-        
-        # Filtra apenas os que são filhos deste comentário
-        replies = [c for c in all_post_comments if c.parent_id == obj.id]
-        
-        # Ordena do mais antigo para o mais novo usando o Python
+        # Lê a lista da memória
+        all_comments = self.context.get("all_post_comments", [])
+        if not all_comments:
+            all_comments = list(obj.post.comments.all())
+            
+        replies = [c for c in all_comments if c.parent_id == obj.id]
         replies.sort(key=lambda x: x.created_at)
         
-        # Usa o próprio CommentSerializer para transformar as respostas em JSON
+        # Repassa o mesmo contexto para as respostas
         serializer = CommentSerializer(replies, many=True, context=self.context)
         return serializer.data
 
@@ -323,16 +325,17 @@ class PostSerializer(serializers.ModelSerializer):
         return len(obj.comments.all())
 
     def get_top_level_comments(self, obj):
-        # Filtra na memória os comentários que não têm pai (comentários principais)
-        comments = [c for c in obj.comments.all() if c.parent_id is None]
-        
-        # Ordena do mais antigo para o mais novo usando o Python
+        all_comments = list(obj.comments.all())
+        comments = [c for c in all_comments if c.parent_id is None]
         comments.sort(key=lambda x: x.created_at)
+        
+        context = self.context.copy()
+        context["all_post_comments"] = all_comments
         
         serializer = CommentSerializer(
             comments,
             many=True,
-            context=self.context
+            context=context
         )
         return serializer.data
 
