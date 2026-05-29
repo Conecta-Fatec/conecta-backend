@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db.models import prefetch_related_objects
 
 from .models import CustomUser, Friendship
 from .serializers import (
@@ -155,7 +156,11 @@ class UsersSearchAPIView(APIView):
             or ""
         ).strip()
 
-        users = CustomUser.objects.all().order_by("first_name", "last_name", "nickname")
+        # O prefetch_related puxa todas as amizades de todos os usuários numa tacada só!
+        users = CustomUser.objects.prefetch_related(
+            "sent_friendships__receiver",
+            "received_friendships__sender"
+        ).all().order_by("first_name", "last_name", "nickname")
 
         if query:
             users = users.filter(
@@ -201,7 +206,13 @@ class FriendsListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        friends = request.user.get_friends()
+        # Carrega o usuário atual já com o cache de amizades
+        user_with_prefetch = CustomUser.objects.prefetch_related(
+            "sent_friendships__receiver",
+            "received_friendships__sender"
+        ).get(id=request.user.id)
+        
+        friends = user_with_prefetch.get_friends()
 
         data = [
             {
@@ -228,10 +239,6 @@ class FriendsListAPIView(APIView):
         )
 
 
-# =====================================
-# LISTAR SOLICITAÇÕES RECEBIDAS
-# =====================================
-
 
 # =====================================
 # LISTAR AMIGOS DE UM PERFIL PÚBLICO
@@ -240,15 +247,23 @@ class PublicFriendsListAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, nickname):
-        user = get_object_or_404(CustomUser, nickname=nickname)
+        # 1. Pega o dono do perfil com prefetch
+        user = CustomUser.objects.prefetch_related(
+            "sent_friendships__receiver",
+            "received_friendships__sender"
+        ).get(nickname=nickname)
+        
         friends = user.get_friends()
+
+        # Carrega as amizades DE TODOS OS AMIGOS na memória numa única consulta!
+        prefetch_related_objects(friends, "sent_friendships__receiver", "received_friendships__sender")
 
         serializer = UserCardSerializer(
             friends,
             many=True,
             context={"request": request}
         )
-
+        
         return Response(
             {
                 "nickname": user.nickname,
@@ -258,7 +273,6 @@ class PublicFriendsListAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
-
 
 class ReceivedFriendRequestsAPIView(APIView):
     permission_classes = [IsAuthenticated]
