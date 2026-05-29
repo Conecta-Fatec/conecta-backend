@@ -156,7 +156,7 @@ class UsersSearchAPIView(APIView):
             or ""
         ).strip()
 
-        # A MAGIA AQUI: O prefetch_related puxa todas as amizades de todos os usuários numa tacada só!
+        # O prefetch_related puxa todas as amizades de todos os usuários numa tacada só!
         users = CustomUser.objects.prefetch_related(
             "sent_friendships__receiver",
             "received_friendships__sender"
@@ -239,10 +239,6 @@ class FriendsListAPIView(APIView):
         )
 
 
-# =====================================
-# LISTAR SOLICITAÇÕES RECEBIDAS
-# =====================================
-
 
 # =====================================
 # LISTAR AMIGOS DE UM PERFIL PÚBLICO
@@ -259,7 +255,7 @@ class PublicFriendsListAPIView(APIView):
         
         friends = user.get_friends()
 
-        # 2. A MAGIA AQUI: Carrega as amizades DE TODOS OS AMIGOS na memória numa única consulta!
+        # Carrega as amizades DE TODOS OS AMIGOS na memória numa única consulta!
         prefetch_related_objects(friends, "sent_friendships__receiver", "received_friendships__sender")
 
         serializer = UserCardSerializer(
