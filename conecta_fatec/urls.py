@@ -4,7 +4,6 @@ from django.contrib import admin
 from django.http import HttpResponse
 from django.urls import include, path
 from rest_framework_simplejwt.views import TokenRefreshView
-
 from users.jwt_views import CustomTokenObtainPairView
 
 
@@ -28,6 +27,9 @@ def health_check(request):
 urlpatterns = [
     # Servidor online
     path("", health_check),
+
+    # Notificação
+    path('api/notifications/', include('notifications.urls')),
 
     # Painel administrativo
     path("admin/", admin.site.urls),

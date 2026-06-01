@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     # Apps do projeto
     'users',
     'posts',
+    'notifications',
     'email_verification',
 ]
 
