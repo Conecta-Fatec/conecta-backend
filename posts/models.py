@@ -99,7 +99,16 @@ class Post(models.Model):
 
     content = models.CharField(
         max_length=200,
+        blank=True, 
+        null=True,
         verbose_name="Conteúdo"
+    )
+
+    gif_url = models.URLField(
+        max_length=500,
+        blank=True,
+        null=True,
+        verbose_name="URL do GIF"
     )
 
     created_at = models.DateTimeField(
@@ -159,7 +168,16 @@ class Comment(models.Model):
 
     content = models.CharField(
         max_length=200,
+        blank=True,
+        null=True,
         verbose_name="Conteúdo"
+    )
+
+    gif_url = models.URLField(
+        max_length=500,
+        blank=True,
+        null=True,
+        verbose_name="URL do GIF"
     )
 
     created_at = models.DateTimeField(

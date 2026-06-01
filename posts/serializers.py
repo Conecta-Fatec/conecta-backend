@@ -207,6 +207,7 @@ class CommentSerializer(serializers.ModelSerializer):
             "liked_by_me",
             "replies_count",
             "replies",
+            "gif_url",
             "created_at",
             "updated_at",
         ]
@@ -303,6 +304,7 @@ class PostSerializer(serializers.ModelSerializer):
             "comments_count",
             "top_level_comments",
             "created_at",
+            "gif_url",
             "updated_at",
         ]
 
