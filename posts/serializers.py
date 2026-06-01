@@ -251,27 +251,32 @@ class CommentSerializer(serializers.ModelSerializer):
 # =====================================
 # SERIALIZER DE CRIAÇÃO/EDIÇÃO DE COMENTÁRIO
 # =====================================
-# Mantém a regra de no máximo 200 caracteres.
 class CommentWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Comment
         fields = [
             "content",
+            "gif_url", # Liberando a entrada do GIF!
         ]
 
     def validate_content(self, value):
-        value = value.strip()
-
-        if not value:
-            raise serializers.ValidationError("O comentário não pode ficar vazio.")
-
-        if len(value) > 200:
-            raise serializers.ValidationError(
-                "O comentário deve ter no máximo 200 caracteres."
-            )
-
+        if value:
+            value = value.strip()
+            if len(value) > 200:
+                raise serializers.ValidationError(
+                    "O comentário deve ter no máximo 200 caracteres."
+                )
         return value
 
+    def validate(self, attrs):
+        content = attrs.get("content", "")
+        gif_url = attrs.get("gif_url", "")
+
+        # A nova regra de ouro: tem que ter pelo menos UM DOS DOIS!
+        if not content and not gif_url:
+            raise serializers.ValidationError("O comentário não pode ficar totalmente vazio.")
+
+        return attrs
 
 # =====================================
 # SERIALIZER DE POST
@@ -349,39 +354,40 @@ class PostSerializer(serializers.ModelSerializer):
 # =====================================
 # SERIALIZER DE CRIAÇÃO/EDIÇÃO DE POST
 # =====================================
-# Mantém a regra de no máximo 200 caracteres.
 class PostWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Post
         fields = [
             "content",
             "community",
+            "gif_url", # Liberando a entrada do GIF no Post!
         ]
 
     def validate_content(self, value):
-        # Remove quebras de linha/espaços duplicados.
-        # A ação de postar com Enter fica no frontend.
-        value = " ".join(value.strip().split())
-
-        if not value:
-            raise serializers.ValidationError("O post não pode ficar vazio.")
-
-        if len(value) > 200:
-            raise serializers.ValidationError(
-                "O post deve ter no máximo 200 caracteres."
-            )
-
+        if value:
+            value = " ".join(value.strip().split())
+            if len(value) > 200:
+                raise serializers.ValidationError(
+                    "O post deve ter no máximo 200 caracteres."
+                )
         return value
 
-    def validate_community(self, value):
+    def validate(self, attrs):
+        content = attrs.get("content", "")
+        gif_url = attrs.get("gif_url", "")
         request = self.context.get("request")
         user = request.user if request else None
 
-        # community pode ser nulo, porque existe post do feed normal
-        if value and user:
-            if not value.members.filter(id=user.id).exists():
+        # Tem que ter texto OU gif
+        if not content and not gif_url:
+            raise serializers.ValidationError("O post precisa de um texto ou um GIF.")
+
+        # Validação da comunidade que você já tinha (intocável)
+        community = attrs.get("community")
+        if community and user:
+            if not community.members.filter(id=user.id).exists():
                 raise serializers.ValidationError(
                     "Você precisa participar da comunidade para postar nela."
                 )
 
-        return value
+        return attrs
