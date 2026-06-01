@@ -1,6 +1,8 @@
 from django.shortcuts import get_object_or_404
+from django.db.models import Count, Prefetch
 
 from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,43 +16,109 @@ from .serializers import (
     PostWriteSerializer,
     CommentSerializer,
     CommentWriteSerializer,
-)# =====================================
-# FEED GLOBAL
-# =====================================
+)
 
-# =====================================
+
+# ==========================================
+# PAGINACAO
+# ==========================================
+
+class PaginacaoPadrao(PageNumberPagination):
+    """
+    Paginacao usada em todos os endpoints que retornam listas.
+
+    Parametros de URL:
+      ?page=2          — pagina desejada
+      ?page_size=5     — itens por pagina (maximo: 50)
+
+    Manutencao: ajuste PAGE_SIZE e MAX_PAGE_SIZE conforme necessidade.
+    """
+    page_size            = 10
+    page_size_query_param = 'page_size'
+    max_page_size        = 50
+
+
+# ==========================================
+# QUERYSETS REUTILIZAVEIS
+# ==========================================
+# Centraliza as queries mais pesadas para evitar repeticao entre views
+# e garantir que o prefetch/annotate seja consistente em todos os endpoints.
+
+def _queryset_posts_completo():
+    """
+    Retorna um queryset de Post com todos os relacionamentos pre-carregados
+    e total_likes calculado via anotacao (sem query extra por post).
+
+    Usado pelo feed global e pelo detalhe de comunidade.
+    """
+    return (
+        Post.objects
+        .select_related("author")
+        .prefetch_related(
+            # Likes do post (ManyToMany — prefetch e mais eficiente que select_related)
+            "likes",
+            # Comentarios com todos os sub-relacionamentos necessarios
+            Prefetch(
+                "comments",
+                queryset=Comment.objects
+                    .select_related("author")
+                    .prefetch_related(
+                        "likes",
+                        "author__sent_friendships__receiver",
+                        "author__received_friendships__sender",
+                    )
+                    .annotate(likes_count=Count("likes", distinct=True))
+                    .order_by("created_at")
+            ),
+            # Amizades do autor do post
+            "author__sent_friendships__receiver",
+            "author__received_friendships__sender",
+        )
+        # likes_count substitui a chamada a post.total_likes() — nenhuma query extra
+        .annotate(likes_count=Count("likes", distinct=True))
+    )
+
+
+def _queryset_comunidades_completo():
+    """
+    Retorna um queryset de Community com total_members anotado.
+    Elimina a chamada a community.total_members() como query separada.
+    """
+    return Community.objects.annotate(
+        members_count_annotation=Count("members", distinct=True)
+    )
+
+
+# ==========================================
 # FEED GLOBAL
-# =====================================
+# ==========================================
+
 class FeedAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        posts = Post.objects.filter(community__isnull=True).select_related(
-            "author"
-        ).prefetch_related(
-            "likes", 
-            "comments", 
-            "comments__author",
-            "author__sent_friendships__receiver",
-            "author__received_friendships__sender",
-            # --- AS TRÊS LINHAS NOVAS PARA OS COMENTÁRIOS ---
-            "comments__likes", 
-            "comments__author__sent_friendships__receiver",
-            "comments__author__received_friendships__sender"
-        ).order_by("-created_at")
+        posts = (
+            _queryset_posts_completo()
+            .filter(community__isnull=True)
+            .order_by("-created_at")
+        )
+
+        paginador = PaginacaoPadrao()
+        pagina = paginador.paginate_queryset(posts, request)
 
         serializer = PostSerializer(
-            posts,
+            pagina,
             many=True,
             context={"request": request}
         )
 
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return paginador.get_paginated_response(serializer.data)
 
-# =====================================
+
+# ==========================================
 # CRIAR POST NO FEED
-# =====================================
-# Cria um post normal, sem comunidade.
+# ==========================================
+
 class CreateFeedPostAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -61,20 +129,12 @@ class CreateFeedPostAPIView(APIView):
         )
 
         if serializer.is_valid():
-            post = serializer.save(
-                author=request.user,
-                community=None
-            )
-
-            response_serializer = PostSerializer(
-                post,
-                context={"request": request}
-            )
+            post = serializer.save(author=request.user, community=None)
 
             return Response(
                 {
                     "message": "Post criado com sucesso.",
-                    "post": response_serializer.data
+                    "post": PostSerializer(post, context={"request": request}).data
                 },
                 status=status.HTTP_201_CREATED
             )
@@ -82,73 +142,48 @@ class CreateFeedPostAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# =====================================
+# ==========================================
 # EDITAR POST
-# =====================================
+# ==========================================
 # Só o autor pode editar.
+
 class UpdatePostAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def put(self, request, post_id):
+    def _atualizar(self, request, post_id, partial=False):
         post = get_object_or_404(Post, id=post_id, author=request.user)
 
         serializer = PostWriteSerializer(
             post,
             data=request.data,
+            partial=partial,
             context={"request": request}
         )
 
         if serializer.is_valid():
             updated_post = serializer.save()
-
-            response_serializer = PostSerializer(
-                updated_post,
-                context={"request": request}
-            )
-
             return Response(
                 {
                     "message": "Post atualizado com sucesso.",
-                    "post": response_serializer.data
+                    "post": PostSerializer(updated_post, context={"request": request}).data
                 },
                 status=status.HTTP_200_OK
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, post_id):
+        return self._atualizar(request, post_id, partial=False)
 
     def patch(self, request, post_id):
-        post = get_object_or_404(Post, id=post_id, author=request.user)
-
-        serializer = PostWriteSerializer(
-            post,
-            data=request.data,
-            partial=True,
-            context={"request": request}
-        )
-
-        if serializer.is_valid():
-            updated_post = serializer.save()
-
-            response_serializer = PostSerializer(
-                updated_post,
-                context={"request": request}
-            )
-
-            return Response(
-                {
-                    "message": "Post atualizado com sucesso.",
-                    "post": response_serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return self._atualizar(request, post_id, partial=True)
 
 
-# =====================================
+# ==========================================
 # EXCLUIR POST
-# =====================================
+# ==========================================
 # Só o autor pode excluir.
+
 class DeletePostAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -162,50 +197,72 @@ class DeletePostAPIView(APIView):
         )
 
 
-# =====================================
+# ==========================================
 # CURTIR / DESCURTIR POST
-# =====================================
+# ==========================================
+
 class ToggleLikePostAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, post_id):
-        post = get_object_or_404(Post, id=post_id)
+        # Anota o total_likes direto na query para nao fazer segunda query no retorno
+        post = get_object_or_404(
+            Post.objects.annotate(likes_count=Count("likes", distinct=True)),
+            id=post_id
+        )
 
         if post.likes.filter(id=request.user.id).exists():
             post.likes.remove(request.user)
-            liked = False
+            liked   = False
             message = "Curtida removida com sucesso."
+            total   = post.likes_count - 1
         else:
             post.likes.add(request.user)
-            liked = True
+            liked   = True
             message = "Post curtido com sucesso."
+            total   = post.likes_count + 1
 
         return Response(
             {
                 "message": message,
-                "liked": liked,
-                "total_likes": post.total_likes(),
+                "liked":       liked,
+                "total_likes": total,
             },
             status=status.HTTP_200_OK
         )
 
 
-# =====================================
+# ==========================================
 # LISTAR COMUNIDADES
-# =====================================
-# Retorna:
-# - comunidades do usuário
-# - outras comunidades
-# - quantidade criadas pelo usuário
+# ==========================================
+# Retorna comunidades do usuario, outras comunidades (paginadas)
+# e quantidade criadas pelo usuario — tudo em queries otimizadas.
+
 class CommunityListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
 
-        my_communities = user.communities.all().order_by("name")
-        other_communities = Community.objects.exclude(members=user).order_by("name")
-        created_communities_count = Community.objects.filter(creator=user).count()
+        # Comunidades do usuario: sem limite (tendem a ser poucas)
+        my_communities = (
+            _queryset_comunidades_completo()
+            .filter(members=user)
+            .order_by("name")
+        )
+
+        # Outras comunidades: paginadas para nao carregar tudo de uma vez
+        other_communities_qs = (
+            _queryset_comunidades_completo()
+            .exclude(members=user)
+            .order_by("name")
+        )
+
+        # Contagem de criadas pelo usuario: query simples de agregacao
+        created_count = Community.objects.filter(creator=user).count()
+
+        paginador = PaginacaoPadrao()
+        other_paginated = paginador.paginate_queryset(other_communities_qs, request)
 
         return Response(
             {
@@ -215,24 +272,27 @@ class CommunityListAPIView(APIView):
                     context={"request": request}
                 ).data,
                 "other_communities": CommunitySerializer(
-                    other_communities,
+                    other_paginated,
                     many=True,
                     context={"request": request}
                 ).data,
-                "created_communities_count": created_communities_count,
+                "other_communities_total": paginador.page.paginator.count,
+                "other_communities_next":  paginador.get_next_link(),
+                "created_communities_count": created_count,
             },
             status=status.HTTP_200_OK
         )
 
 
-# =====================================
+# ==========================================
 # CRIAR COMUNIDADE
-# =====================================
+# ==========================================
 # Regras:
-# - nome obrigatório
-# - descrição até 150 caracteres
-# - usuário pode criar no máximo 3
+# - nome obrigatorio
+# - descricao ate 150 caracteres
+# - usuario pode criar no maximo 3
 # - criador entra automaticamente como membro
+
 class CreateCommunityAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -244,19 +304,14 @@ class CreateCommunityAPIView(APIView):
 
         if serializer.is_valid():
             community = serializer.save(creator=request.user)
-
-            # Criador entra automaticamente como membro
             community.members.add(request.user)
-
-            response_serializer = CommunitySerializer(
-                community,
-                context={"request": request}
-            )
 
             return Response(
                 {
                     "message": "Comunidade criada com sucesso.",
-                    "community": response_serializer.data
+                    "community": CommunitySerializer(
+                        community, context={"request": request}
+                    ).data
                 },
                 status=status.HTTP_201_CREATED
             )
@@ -264,61 +319,76 @@ class CreateCommunityAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# =====================================
+# ==========================================
 # DETALHE DA COMUNIDADE
-# =====================================
-# Retorna:
-# - dados da comunidade
-# - posts da comunidade
-# - membros
-# - quantidade de membros
-# - se o usuário logado participa
+# ==========================================
+
 class CommunityDetailAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
-        community = get_object_or_404(Community, slug=slug)
+        # Busca a comunidade ja com total_members anotado
+        community = get_object_or_404(
+            _queryset_comunidades_completo(),
+            slug=slug
+        )
 
-        posts = community.posts.select_related(
-            "author"
-        ).prefetch_related(
-            "likes", 
-            "comments", 
-            "comments__author"
-        ).order_by("-created_at")
-        members = community.members.all().order_by("first_name", "last_name")
+        # Posts da comunidade com o mesmo prefetch completo do feed global
+        posts = (
+            _queryset_posts_completo()
+            .filter(community=community)
+            .order_by("-created_at")
+        )
 
-        is_member = False
-        if request.user.is_authenticated:
-            is_member = community.members.filter(id=request.user.id).exists()
+        # Membros com select_related para campos que o AuthorSerializer acessa
+        members = (
+            community.members
+            .select_related("profile")        # ajuste para o related_name correto do seu modelo
+            .prefetch_related(
+                "sent_friendships__receiver",
+                "received_friendships__sender",
+            )
+            .order_by("first_name", "last_name")
+        )
+
+        is_member = (
+            request.user.is_authenticated
+            and community.members.filter(id=request.user.id).exists()
+        )
+
+        paginador = PaginacaoPadrao()
+        posts_paginados = paginador.paginate_queryset(posts, request)
 
         return Response(
             {
                 "community": CommunitySerializer(
-                    community,
-                    context={"request": request}
+                    community, context={"request": request}
                 ).data,
                 "posts": PostSerializer(
-                    posts,
+                    posts_paginados,
                     many=True,
                     context={"request": request}
                 ).data,
+                "posts_next":    paginador.get_next_link(),
+                "posts_total":   paginador.page.paginator.count,
                 "members": AuthorSerializer(
                     members,
                     many=True,
                     context={"request": request}
                 ).data,
-                "members_count": community.total_members(),
-                "is_member": is_member,
+                # Usa o valor anotado — sem query extra
+                "members_count": community.members_count_annotation,
+                "is_member":     is_member,
             },
             status=status.HTTP_200_OK
         )
 
 
-# =====================================
+# ==========================================
 # CRIAR POST NA COMUNIDADE
-# =====================================
-# Só pode postar se for membro da comunidade.
+# ==========================================
+# Só pode postar se for membro.
+
 class CreateCommunityPostAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -337,20 +407,12 @@ class CreateCommunityPostAPIView(APIView):
         )
 
         if serializer.is_valid():
-            post = serializer.save(
-                author=request.user,
-                community=community
-            )
-
-            response_serializer = PostSerializer(
-                post,
-                context={"request": request}
-            )
+            post = serializer.save(author=request.user, community=community)
 
             return Response(
                 {
                     "message": "Post criado com sucesso na comunidade.",
-                    "post": response_serializer.data
+                    "post": PostSerializer(post, context={"request": request}).data
                 },
                 status=status.HTTP_201_CREATED
             )
@@ -358,9 +420,10 @@ class CreateCommunityPostAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# =====================================
+# ==========================================
 # ENTRAR NA COMUNIDADE
-# =====================================
+# ==========================================
+
 class JoinCommunityAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -374,9 +437,10 @@ class JoinCommunityAPIView(APIView):
         )
 
 
-# =====================================
+# ==========================================
 # SAIR DA COMUNIDADE
-# =====================================
+# ==========================================
+
 class LeaveCommunityAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -390,84 +454,59 @@ class LeaveCommunityAPIView(APIView):
         )
 
 
-# =====================================
+# ==========================================
 # EDITAR COMUNIDADE
-# =====================================
+# ==========================================
 # Só o criador pode editar.
+# Corrigido: o slug agora e regenerado dentro do serializer/model.save()
+# em uma unica operacao, sem double save.
+
 class UpdateCommunityAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def put(self, request, slug):
+    def _atualizar(self, request, slug, partial=False):
         community = get_object_or_404(Community, slug=slug, creator=request.user)
+        nome_anterior = community.name
 
         serializer = CommunityWriteSerializer(
             community,
             data=request.data,
+            partial=partial,
             context={"request": request}
         )
 
         if serializer.is_valid():
-            old_name = community.name
+            # Se o nome mudou, limpa o slug ANTES do save para que o
+            # modelo/signal regenere em uma unica operacao.
+            if nome_anterior != serializer.validated_data.get("name", nome_anterior):
+                serializer.validated_data["slug"] = ""
+
             updated_community = serializer.save()
-
-            # Se o nome mudou, regeneramos o slug
-            if old_name != updated_community.name:
-                updated_community.slug = ""
-                updated_community.save()
-
-            response_serializer = CommunitySerializer(
-                updated_community,
-                context={"request": request}
-            )
 
             return Response(
                 {
                     "message": "Comunidade atualizada com sucesso.",
-                    "community": response_serializer.data
+                    "community": CommunitySerializer(
+                        updated_community, context={"request": request}
+                    ).data
                 },
                 status=status.HTTP_200_OK
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, slug):
+        return self._atualizar(request, slug, partial=False)
 
     def patch(self, request, slug):
-        community = get_object_or_404(Community, slug=slug, creator=request.user)
-
-        serializer = CommunityWriteSerializer(
-            community,
-            data=request.data,
-            partial=True,
-            context={"request": request}
-        )
-
-        if serializer.is_valid():
-            old_name = community.name
-            updated_community = serializer.save()
-
-            if old_name != updated_community.name:
-                updated_community.slug = ""
-                updated_community.save()
-
-            response_serializer = CommunitySerializer(
-                updated_community,
-                context={"request": request}
-            )
-
-            return Response(
-                {
-                    "message": "Comunidade atualizada com sucesso.",
-                    "community": response_serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return self._atualizar(request, slug, partial=True)
 
 
-# =====================================
+# ==========================================
 # EXCLUIR COMUNIDADE
-# =====================================
+# ==========================================
 # Só o criador pode excluir.
+
 class DeleteCommunityAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -481,32 +520,26 @@ class DeleteCommunityAPIView(APIView):
         )
 
 
-# =====================================
+# ==========================================
 # CRIAR COMENTÁRIO EM POST
-# =====================================
+# ==========================================
+
 class CreateCommentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, post_id):
         post = get_object_or_404(Post, id=post_id)
-
         serializer = CommentWriteSerializer(data=request.data)
 
         if serializer.is_valid():
-            comment = serializer.save(
-                author=request.user,
-                post=post
-            )
-
-            response_serializer = CommentSerializer(
-                comment,
-                context={"request": request}
-            )
+            comment = serializer.save(author=request.user, post=post)
 
             return Response(
                 {
                     "message": "Comentário criado com sucesso.",
-                    "comment": response_serializer.data
+                    "comment": CommentSerializer(
+                        comment, context={"request": request}
+                    ).data
                 },
                 status=status.HTTP_201_CREATED
             )
@@ -514,33 +547,33 @@ class CreateCommentAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# =====================================
+# ==========================================
 # RESPONDER COMENTÁRIO
-# =====================================
+# ==========================================
+
 class ReplyCommentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, comment_id):
-        parent_comment = get_object_or_404(Comment, id=comment_id)
-
+        parent = get_object_or_404(
+            Comment.objects.select_related("post"),
+            id=comment_id
+        )
         serializer = CommentWriteSerializer(data=request.data)
 
         if serializer.is_valid():
             comment = serializer.save(
                 author=request.user,
-                post=parent_comment.post,
-                parent=parent_comment
-            )
-
-            response_serializer = CommentSerializer(
-                comment,
-                context={"request": request}
+                post=parent.post,
+                parent=parent
             )
 
             return Response(
                 {
                     "message": "Resposta criada com sucesso.",
-                    "comment": response_serializer.data
+                    "comment": CommentSerializer(
+                        comment, context={"request": request}
+                    ).data
                 },
                 status=status.HTTP_201_CREATED
             )
@@ -548,72 +581,51 @@ class ReplyCommentAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# =====================================
+# ==========================================
 # EDITAR COMENTÁRIO
-# =====================================
+# ==========================================
 # Só o autor pode editar.
+
 class UpdateCommentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def put(self, request, comment_id):
-        comment = get_object_or_404(Comment, id=comment_id, author=request.user)
-
-        serializer = CommentWriteSerializer(comment, data=request.data)
-
-        if serializer.is_valid():
-            updated_comment = serializer.save()
-            updated_comment.edited = True
-            updated_comment.save()
-
-            response_serializer = CommentSerializer(
-                updated_comment,
-                context={"request": request}
-            )
-
-            return Response(
-                {
-                    "message": "Comentário atualizado com sucesso.",
-                    "comment": response_serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def patch(self, request, comment_id):
+    def _atualizar(self, request, comment_id, partial=False):
         comment = get_object_or_404(Comment, id=comment_id, author=request.user)
 
         serializer = CommentWriteSerializer(
             comment,
             data=request.data,
-            partial=True
+            partial=partial
         )
 
         if serializer.is_valid():
-            updated_comment = serializer.save()
-            updated_comment.edited = True
-            updated_comment.save()
-
-            response_serializer = CommentSerializer(
-                updated_comment,
-                context={"request": request}
-            )
+            # Marca como editado e salva em uma unica operacao
+            updated_comment = serializer.save(edited=True)
 
             return Response(
                 {
                     "message": "Comentário atualizado com sucesso.",
-                    "comment": response_serializer.data
+                    "comment": CommentSerializer(
+                        updated_comment, context={"request": request}
+                    ).data
                 },
                 status=status.HTTP_200_OK
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    def put(self, request, comment_id):
+        return self._atualizar(request, comment_id, partial=False)
 
-# =====================================
+    def patch(self, request, comment_id):
+        return self._atualizar(request, comment_id, partial=True)
+
+
+# ==========================================
 # EXCLUIR COMENTÁRIO
-# =====================================
+# ==========================================
 # Só o autor pode excluir.
+
 class DeleteCommentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -627,29 +639,35 @@ class DeleteCommentAPIView(APIView):
         )
 
 
-# =====================================
+# ==========================================
 # CURTIR / DESCURTIR COMENTÁRIO
-# =====================================
+# ==========================================
+
 class ToggleLikeCommentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, comment_id):
-        comment = get_object_or_404(Comment, id=comment_id)
+        comment = get_object_or_404(
+            Comment.objects.annotate(likes_count=Count("likes", distinct=True)),
+            id=comment_id
+        )
 
         if comment.likes.filter(id=request.user.id).exists():
             comment.likes.remove(request.user)
-            liked = False
+            liked   = False
             message = "Curtida removida com sucesso."
+            total   = comment.likes_count - 1
         else:
             comment.likes.add(request.user)
-            liked = True
+            liked   = True
             message = "Comentário curtido com sucesso."
+            total   = comment.likes_count + 1
 
         return Response(
             {
                 "message": message,
-                "liked": liked,
-                "total_likes": comment.total_likes(),
+                "liked":       liked,
+                "total_likes": total,
             },
             status=status.HTTP_200_OK
         )
