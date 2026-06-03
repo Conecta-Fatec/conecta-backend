@@ -318,45 +318,46 @@ class CreateCommunityAPIView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        
 
-# ==========================================
-# DETALHE DA COMUNIDADE
-# ==========================================
+# Adicione este import lá no topo do seu arquivo views.py (se já não tiver):
+from rest_framework.pagination import PageNumberPagination
 
+# =====================================
+# DETALHE DA COMUNIDADE (Com Paginação)
+# =====================================
 class CommunityDetailAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
-        # Busca a comunidade ja com total_members anotado
-        community = get_object_or_404(
-            _queryset_comunidades_completo(),
-            slug=slug
-        )
+        # 1. Busca a comunidade normalmente
+        community = get_object_or_404(Community, slug=slug)
 
-        # Posts da comunidade com o mesmo prefetch completo do feed global
-        posts = (
-            _queryset_posts_completo()
-            .filter(community=community)
-            .order_by("-created_at")
-        )
+        # 2. Busca os posts com a NOSSA otimização completa (sem limite fixo)
+        posts = Post.objects.filter(community=community).select_related(
+            "author"
+        ).prefetch_related(
+            "likes", 
+            "comments", 
+            "comments__author",
+            "comments__likes",
+            "author__sent_friendships__receiver",
+            "author__received_friendships__sender"
+        ).order_by("-created_at")
 
-        # Membros com select_related para campos que o AuthorSerializer acessa
-        members = (
-            community.members
-            .select_related("profile")        # ajuste para o related_name correto do seu modelo
-            .prefetch_related(
-                "sent_friendships__receiver",
-                "received_friendships__sender",
-            )
-            .order_by("first_name", "last_name")
-        )
+        # 3. Busca os membros com otimização (adaptado para o FATEC)
+        members = community.members.prefetch_related(
+            "sent_friendships__receiver",
+            "received_friendships__sender"
+        ).order_by("first_name", "last_name")
 
-        is_member = (
-            request.user.is_authenticated
-            and community.members.filter(id=request.user.id).exists()
-        )
+        is_member = False
+        if request.user.is_authenticated:
+            is_member = community.members.filter(id=request.user.id).exists()
 
-        paginador = PaginacaoPadrao()
+        # 4. Configura a Paginação Nativa do Django REST
+        paginador = PageNumberPagination()
+        paginador.page_size = 30 # Quantidade de posts por página!
         posts_paginados = paginador.paginate_queryset(posts, request)
 
         return Response(
@@ -369,20 +370,19 @@ class CommunityDetailAPIView(APIView):
                     many=True,
                     context={"request": request}
                 ).data,
-                "posts_next":    paginador.get_next_link(),
-                "posts_total":   paginador.page.paginator.count,
+                "posts_next": paginador.get_next_link(),
+                "posts_total": paginador.page.paginator.count,
                 "members": AuthorSerializer(
                     members,
                     many=True,
                     context={"request": request}
                 ).data,
-                # Usa o valor anotado — sem query extra
-                "members_count": community.members_count_annotation,
-                "is_member":     is_member,
+                # Mantive a sua função original que já funciona perfeitamente:
+                "members_count": community.total_members(),
+                "is_member": is_member,
             },
             status=status.HTTP_200_OK
         )
-
 
 # ==========================================
 # CRIAR POST NA COMUNIDADE
