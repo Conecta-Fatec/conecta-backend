@@ -18,6 +18,7 @@ from .api_views import (
     ReplyCommentAPIView,
     UpdateCommentAPIView,
     DeleteCommentAPIView,
+    PostDetailAPIView,
     ToggleLikeCommentAPIView,
 )
 
@@ -37,6 +38,8 @@ urlpatterns = [
     # POST /api/posts/feed/create/
     path("feed/create/", CreateFeedPostAPIView.as_view(), name="create-feed-post"),
 
+    # DETALHE POST
+    path('post/<int:post_id>/', PostDetailAPIView.as_view(), name='post-detail'),
     # ------------------------------
     # EDITAR / EXCLUIR / CURTIR POST
     # ------------------------------

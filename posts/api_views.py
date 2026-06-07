@@ -671,3 +671,24 @@ class ToggleLikeCommentAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+    
+# ==========================================
+# DETALHE DO POST (VER POST COMPLETO)
+# ==========================================
+class PostDetailAPIView(APIView):
+    permission_classes = [AllowAny] # Permite ver o post mesmo sem estar logado
+
+    def get(self, request, post_id):
+        # Usa a sua query super otimizada que já traz likes, comentários e amizades!
+        post = get_object_or_404(
+            _queryset_posts_completo(),
+            id=post_id
+        )
+
+        serializer = PostSerializer(
+            post,
+            context={"request": request}
+        )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)    
+    
