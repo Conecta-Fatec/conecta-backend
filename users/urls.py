@@ -1,6 +1,7 @@
 from django.urls import path
 from .api_views import (
     RegisterAPIView,
+    PasswordResetConfirmAPIView,
     MyProfileAPIView,
     UpdateMyProfileAPIView,
     PublicProfileAPIView,
@@ -26,6 +27,9 @@ urlpatterns = [
     # ------------------------------
     # POST /api/users/register/
     path("register/", RegisterAPIView.as_view(), name="register"),
+
+    # POST /api/users/password-reset/confirm/
+    path("password-reset/confirm/", PasswordResetConfirmAPIView.as_view(), name="password-reset-confirm"),
 
     # ------------------------------
     # BUSCA / TOTAL DE USUÁRIOS

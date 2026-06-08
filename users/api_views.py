@@ -13,6 +13,7 @@ from .serializers import (
     UserSerializer,
     PublicUserSerializer,
     ProfileUpdateSerializer,
+    PasswordResetConfirmSerializer,
     FriendshipSerializer,
     UserCardSerializer,
 )
@@ -44,6 +45,28 @@ class RegisterAPIView(APIView):
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# =====================================
+# FINALIZAR REDEFINIÇÃO DE SENHA
+# =====================================
+class PasswordResetConfirmAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response(
+                {
+                    "message": "Senha alterada com sucesso. Faça login novamente."
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 # =====================================
 # PERFIL PRIVADO DO USUÁRIO LOGADO
 # =====================================

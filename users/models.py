@@ -60,6 +60,7 @@ class CustomUser(AbstractUser):
     last_name = models.CharField(max_length=30, verbose_name="Sobrenome")
     nickname = models.CharField(max_length=30, unique=True, verbose_name="Nickname")
     email = models.EmailField(unique=True, verbose_name="Email institucional")
+    last_password_changed_at = models.DateTimeField(blank=True, null=True)
 
     # Mantido para compatibilidade com o frontend antigo.
     # A regra real agora usa nickname_changes_count + nickname_change_window_started_at.
@@ -133,6 +134,41 @@ class CustomUser(AbstractUser):
 
         # Atualiza o booleano antigo apenas para não quebrar retornos antigos.
         self.nickname_editable = self.nickname_changes_count < self.NICKNAME_CHANGE_LIMIT
+
+    # ---------------------------------
+    # REGRAS DE ALTERAÇÃO DE SENHA
+    # ---------------------------------
+    PASSWORD_CHANGE_COOLDOWN_DAYS = 20
+
+    def get_password_change_status(self):
+        """Retorna se o usuário pode alterar a senha no momento."""
+        last_change = self.last_password_changed_at
+
+        if not last_change:
+            return {
+                "can_change": True,
+                "last_changed_at": None,
+                "next_allowed_at": None,
+                "cooldown_days": self.PASSWORD_CHANGE_COOLDOWN_DAYS,
+            }
+
+        next_allowed_at = last_change + timedelta(days=self.PASSWORD_CHANGE_COOLDOWN_DAYS)
+        can_change = timezone.now() >= next_allowed_at
+
+        return {
+            "can_change": can_change,
+            "last_changed_at": last_change,
+            "next_allowed_at": None if can_change else next_allowed_at,
+            "cooldown_days": self.PASSWORD_CHANGE_COOLDOWN_DAYS,
+        }
+
+    def can_change_password(self):
+        """Informa se o usuário pode trocar a senha respeitando o intervalo de 20 dias."""
+        return self.get_password_change_status()["can_change"]
+
+    def register_password_change(self):
+        """Registra a data da última alteração de senha."""
+        self.last_password_changed_at = timezone.now()
 
     # =====================================
     # MÉTODOS DE AMIZADE (REGRAS DE NEGÓCIO)

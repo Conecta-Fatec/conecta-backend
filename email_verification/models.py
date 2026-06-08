@@ -10,9 +10,11 @@ from django.utils import timezone
 # =====================================
 class EmailVerification(models.Model):
     PURPOSE_REGISTER = "register"
+    PURPOSE_PASSWORD_RESET = "password_reset"
 
     PURPOSE_CHOICES = [
         (PURPOSE_REGISTER, "Cadastro"),
+        (PURPOSE_PASSWORD_RESET, "Recuperação de senha"),
     ]
 
     id = models.UUIDField(
@@ -61,6 +63,10 @@ class EmailVerification(models.Model):
 
     @property
     def is_registered(self):
+        return self.registered_at is not None
+
+    @property
+    def is_used(self):
         return self.registered_at is not None
 
     @property

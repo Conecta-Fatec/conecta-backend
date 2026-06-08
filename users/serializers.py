@@ -7,7 +7,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 
 from email_verification.models import EmailVerification
-from email_verification.services import read_registration_token
+from email_verification.services import read_registration_token, read_password_reset_token
 
 from .models import CustomUser, Friendship
 from posts.models import Post, Community
@@ -564,6 +564,119 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
 
         # Marca a verificação como usada para impedir reutilização do mesmo token.
+        verification.registered_at = timezone.now()
+        verification.save(update_fields=["registered_at", "updated_at"])
+
+        return user
+
+
+# =====================================
+# SERIALIZER DE REDEFINIÇÃO DE SENHA
+# =====================================
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    password_reset_token = serializers.CharField(
+        write_only=True,
+        error_messages={
+            "blank": "O token de recuperação é obrigatório.",
+            "required": "O token de recuperação é obrigatório.",
+        }
+    )
+
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+        error_messages={
+            "min_length": "A senha deve ter no mínimo 8 caracteres.",
+            "blank": "A senha é obrigatória.",
+            "required": "A senha é obrigatória.",
+        }
+    )
+
+    confirm_password = serializers.CharField(
+        write_only=True,
+        error_messages={
+            "blank": "A confirmação de senha é obrigatória.",
+            "required": "A confirmação de senha é obrigatória.",
+        }
+    )
+
+    def validate(self, attrs):
+        password = attrs.get("password")
+        confirm_password = attrs.get("confirm_password")
+        password_reset_token = attrs.get("password_reset_token")
+
+        if password != confirm_password:
+            raise serializers.ValidationError({
+                "confirm_password": "As senhas não coincidem."
+            })
+
+        try:
+            token_data = read_password_reset_token(password_reset_token)
+        except SignatureExpired:
+            raise serializers.ValidationError({
+                "password_reset_token": "Token de recuperação expirado. Solicite um novo código."
+            })
+        except BadSignature:
+            raise serializers.ValidationError({
+                "password_reset_token": "Token de recuperação inválido. Confirme o email novamente."
+            })
+
+        verification_id = token_data.get("verification_id")
+        email = str(token_data.get("email", "")).strip().lower()
+        purpose = token_data.get("purpose")
+
+        if purpose != EmailVerification.PURPOSE_PASSWORD_RESET:
+            raise serializers.ValidationError({
+                "password_reset_token": "Token de recuperação inválido."
+            })
+
+        try:
+            verification = EmailVerification.objects.get(
+                id=verification_id,
+                email__iexact=email,
+                purpose=EmailVerification.PURPOSE_PASSWORD_RESET,
+            )
+        except EmailVerification.DoesNotExist:
+            raise serializers.ValidationError({
+                "password_reset_token": "Verificação de email não encontrada."
+            })
+
+        if not verification.is_confirmed:
+            raise serializers.ValidationError({
+                "password_reset_token": "Confirme o código enviado para o email antes de trocar a senha."
+            })
+
+        if verification.is_used:
+            raise serializers.ValidationError({
+                "password_reset_token": "Este token de recuperação já foi utilizado."
+            })
+
+        try:
+            user = CustomUser.objects.get(email__iexact=email)
+        except CustomUser.DoesNotExist:
+            raise serializers.ValidationError({
+                "password_reset_token": "Email não cadastrado."
+            })
+
+        if not user.can_change_password():
+            raise serializers.ValidationError({
+                "password_reset_token": "Usuário trocou a senha recentemente."
+            })
+
+        attrs["user"] = user
+        attrs["verification"] = verification
+        return attrs
+
+    @transaction.atomic
+    def save(self, **kwargs):
+        user = self.validated_data["user"]
+        verification = self.validated_data["verification"]
+        password = self.validated_data["password"]
+
+        user.set_password(password)
+        user.register_password_change()
+        user.save(update_fields=["password", "last_password_changed_at"])
+
         verification.registered_at = timezone.now()
         verification.save(update_fields=["registered_at", "updated_at"])
 

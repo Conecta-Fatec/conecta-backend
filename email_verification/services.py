@@ -13,6 +13,7 @@ from .models import EmailVerification
 # CONFIGURAÇÕES INTERNAS
 # =====================================
 REGISTRATION_TOKEN_SALT = "conecta_fatec.registration_token"
+PASSWORD_RESET_TOKEN_SALT = "conecta_fatec.password_reset_token"
 
 
 # =====================================
@@ -23,36 +24,53 @@ def generate_verification_code():
 
 
 # =====================================
+# TEXTO DO EMAIL POR FINALIDADE
+# =====================================
+def get_email_purpose_text(purpose):
+    if purpose == EmailVerification.PURPOSE_PASSWORD_RESET:
+        return {
+            "subject": "Código para redefinir senha - Conecta Fatec",
+            "request_text": "Recebemos uma solicitação para redefinir a senha da sua conta no Conecta Fatec.",
+            "ignore_text": "Se você não solicitou a redefinição de senha, ignore este e-mail.",
+        }
+
+    return {
+        "subject": "Código de verificação - Conecta Fatec",
+        "request_text": "Recebemos uma solicitação de cadastro no Conecta Fatec.",
+        "ignore_text": "Se você não solicitou este cadastro, ignore este e-mail.",
+    }
+
+
+# =====================================
 # ENVIAR EMAIL
 # =====================================
-def send_verification_email(email, code):
+def send_verification_email(email, code, purpose=EmailVerification.PURPOSE_REGISTER):
     provider = getattr(settings, "EMAIL_PROVIDER", "brevo").lower()
 
     if provider == "brevo":
-        return send_verification_email_brevo(email, code)
+        return send_verification_email_brevo(email, code, purpose=purpose)
 
-    return send_verification_email_smtp(email, code)
+    return send_verification_email_smtp(email, code, purpose=purpose)
 
 
 # =====================================
 # ENVIAR EMAIL VIA SMTP - FALLBACK
 # =====================================
-def send_verification_email_smtp(email, code):
+def send_verification_email_smtp(email, code, purpose=EmailVerification.PURPOSE_REGISTER):
     minutes = getattr(settings, "EMAIL_VERIFICATION_CODE_MINUTES", 10)
-
-    subject = "Código de verificação - Conecta Fatec"
+    content = get_email_purpose_text(purpose)
 
     message = (
         "Olá!\n\n"
-        "Recebemos uma solicitação de cadastro no Conecta Fatec.\n\n"
+        f"{content['request_text']}\n\n"
         f"Seu código de verificação é: {code}\n\n"
         f"Este código é válido por {minutes} minutos.\n\n"
-        "Se você não solicitou este cadastro, ignore este e-mail.\n\n"
+        f"{content['ignore_text']}\n\n"
         "Conecta Fatec"
     )
 
     send_mail(
-        subject=subject,
+        subject=content["subject"],
         message=message,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[email],
@@ -63,10 +81,11 @@ def send_verification_email_smtp(email, code):
 # =====================================
 # ENVIAR EMAIL VIA BREVO API
 # =====================================
-def send_verification_email_brevo(email, code):
+def send_verification_email_brevo(email, code, purpose=EmailVerification.PURPOSE_REGISTER):
     import requests
 
     minutes = getattr(settings, "EMAIL_VERIFICATION_CODE_MINUTES", 10)
+    content = get_email_purpose_text(purpose)
 
     api_key = getattr(settings, "BREVO_API_KEY", None)
     sender_email = getattr(settings, "BREVO_SENDER_EMAIL", None)
@@ -79,25 +98,23 @@ def send_verification_email_brevo(email, code):
     if not sender_email:
         raise RuntimeError("BREVO_SENDER_EMAIL não configurado no backend.")
 
-    subject = "Código de verificação - Conecta Fatec"
-
     text_content = (
         "Olá!\n\n"
-        "Recebemos uma solicitação de cadastro no Conecta Fatec.\n\n"
+        f"{content['request_text']}\n\n"
         f"Seu código de verificação é: {code}\n\n"
         f"Este código é válido por {minutes} minutos.\n\n"
-        "Se você não solicitou este cadastro, ignore este e-mail.\n\n"
+        f"{content['ignore_text']}\n\n"
         "Conecta Fatec"
     )
 
     html_content = f"""
     <html>
       <body style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">
-        <h2>Código de verificação - Conecta Fatec</h2>
+        <h2>{content['subject']}</h2>
 
         <p>Olá!</p>
 
-        <p>Recebemos uma solicitação de cadastro no Conecta Fatec.</p>
+        <p>{content['request_text']}</p>
 
         <p>Seu código de verificação é:</p>
 
@@ -107,7 +124,7 @@ def send_verification_email_brevo(email, code):
 
         <p>Este código é válido por {minutes} minutos.</p>
 
-        <p>Se você não solicitou este cadastro, ignore este e-mail.</p>
+        <p>{content['ignore_text']}</p>
 
         <p>Conecta Fatec</p>
       </body>
@@ -124,7 +141,7 @@ def send_verification_email_brevo(email, code):
                 "email": email,
             }
         ],
-        "subject": subject,
+        "subject": content["subject"],
         "textContent": text_content,
         "htmlContent": html_content,
     }
@@ -157,7 +174,7 @@ def send_verification_email_brevo(email, code):
 # =====================================
 # CRIAR VERIFICAÇÃO
 # =====================================
-def create_email_verification(email):
+def create_email_verification(email, purpose=EmailVerification.PURPOSE_REGISTER):
     code = generate_verification_code()
 
     minutes = getattr(settings, "EMAIL_VERIFICATION_CODE_MINUTES", 10)
@@ -165,17 +182,23 @@ def create_email_verification(email):
 
     expires_at = timezone.now() + timedelta(minutes=minutes)
 
-    # Remove códigos antigos ainda não confirmados para o mesmo email.
-    EmailVerification.objects.filter(
+    # Remove códigos antigos para o mesmo email e finalidade.
+    # No cadastro, preserva uma verificação já confirmada enquanto o usuário finaliza os dados.
+    # Na recuperação de senha, invalida também tokens confirmados ainda não usados.
+    old_verifications = EmailVerification.objects.filter(
         email__iexact=email,
-        purpose=EmailVerification.PURPOSE_REGISTER,
-        confirmed_at__isnull=True,
+        purpose=purpose,
         registered_at__isnull=True,
-    ).delete()
+    )
+
+    if purpose == EmailVerification.PURPOSE_REGISTER:
+        old_verifications = old_verifications.filter(confirmed_at__isnull=True)
+
+    old_verifications.delete()
 
     verification = EmailVerification(
         email=email,
-        purpose=EmailVerification.PURPOSE_REGISTER,
+        purpose=purpose,
         max_attempts=max_attempts,
         expires_at=expires_at,
     )
@@ -183,7 +206,7 @@ def create_email_verification(email):
     verification.set_code(code)
     verification.save()
 
-    send_verification_email(email, code)
+    send_verification_email(email, code, purpose=purpose)
 
     return verification
 
@@ -210,5 +233,31 @@ def read_registration_token(token):
     return loads(
         token,
         salt=REGISTRATION_TOKEN_SALT,
+        max_age=max_age,
+    )
+
+
+# =====================================
+# CRIAR TOKEN TEMPORÁRIO DE REDEFINIÇÃO DE SENHA
+# =====================================
+def make_password_reset_token(verification):
+    payload = {
+        "verification_id": str(verification.id),
+        "email": verification.email,
+        "purpose": verification.purpose,
+    }
+
+    return dumps(payload, salt=PASSWORD_RESET_TOKEN_SALT)
+
+
+# =====================================
+# LER TOKEN TEMPORÁRIO DE REDEFINIÇÃO DE SENHA
+# =====================================
+def read_password_reset_token(token):
+    max_age = getattr(settings, "PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS", 30 * 60)
+
+    return loads(
+        token,
+        salt=PASSWORD_RESET_TOKEN_SALT,
         max_age=max_age,
     )
